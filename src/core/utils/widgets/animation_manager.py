@@ -108,6 +108,32 @@ class AnimationManager:
             animation_method(widget)
 
     def fadeInOut(self, widget):
+        """Fade in/out animation with proper cleanup"""
+        # Check if widget is still valid
+        try:
+            if not widget or not widget.isVisible():
+                return
+        except RuntimeError:
+            return
+
+        # Clean up any existing animation
+        if hasattr(widget, '_yasb_animation') and widget._yasb_animation:
+            try:
+                old_anim = widget._yasb_animation
+                old_anim.stop()
+                old_anim.deleteLater()
+            except (RuntimeError, AttributeError):
+                pass
+
+        # Clean up any existing effect
+        try:
+            old_effect = widget.graphicsEffect()
+            if old_effect:
+                widget.setGraphicsEffect(None)
+                old_effect.deleteLater()
+        except (RuntimeError, AttributeError):
+            pass
+
         effect = QGraphicsOpacityEffect(widget)
         effect.setEnabled(True)
         effect.setOpacity(0.6)
@@ -121,20 +147,28 @@ class AnimationManager:
 
         def on_finished():
             try:
-                effect.setEnabled(False)
-            except Exception:
+                if effect:
+                    effect.setEnabled(False)
+            except (RuntimeError, AttributeError):
                 pass
             try:
-                widget.setGraphicsEffect(None)
-            except Exception:
+                if widget:
+                    widget.setGraphicsEffect(None)
+            except (RuntimeError, AttributeError):
                 pass
             try:
-                widget._yasb_animation = None
-            except Exception:
+                if effect:
+                    effect.deleteLater()
+            except (RuntimeError, AttributeError):
+                pass
+            try:
+                if widget:
+                    widget._yasb_animation = None
+            except (RuntimeError, AttributeError):
                 pass
 
         anim.finished.connect(on_finished)
 
-        # Keep reference to prevent garbage collection if not cleared
+        # Keep reference to prevent garbage collection
         widget._yasb_animation = anim
         anim.start()

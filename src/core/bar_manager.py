@@ -88,21 +88,43 @@ class BarManager(QObject):
             self._threads[listener] = thread
 
     def stop_listener_threads(self):
-        for listener in self.widget_event_listeners:
+        """Enhanced thread cleanup with proper waiting and timeout"""
+        for listener in list(self.widget_event_listeners):
             logging.info(f"Stopping {listener.__name__}...")
             with suppress(KeyError):
-                thread = self._threads[listener]
+                thread = self._threads.get(listener)
+                if not thread:
+                    continue
+
+                # Try to stop the thread gracefully
                 if hasattr(thread, "stop"):
                     try:
                         thread.stop()
                     except Exception as e:
                         logging.debug(f"Thread stop() raised for {listener.__name__}: {e}")
+
+                # Request thread to quit
                 if hasattr(thread, "quit"):
                     try:
                         thread.quit()
-                    except Exception:
-                        pass
-                # thread.wait(1500)
+                    except Exception as e:
+                        logging.debug(f"Thread quit() raised for {listener.__name__}: {e}")
+
+                # Wait for thread to finish with timeout
+                if hasattr(thread, "wait"):
+                    try:
+                        if not thread.wait(2000):  # 2 second timeout
+                            logging.warning(f"Thread {listener.__name__} did not stop within timeout")
+                    except Exception as e:
+                        logging.debug(f"Thread wait() raised for {listener.__name__}: {e}")
+
+                # Clean up thread object
+                try:
+                    if hasattr(thread, "deleteLater"):
+                        thread.deleteLater()
+                except Exception as e:
+                    logging.debug(f"Thread deleteLater() raised for {listener.__name__}: {e}")
+
         self._threads.clear()
         self.widget_event_listeners.clear()
 

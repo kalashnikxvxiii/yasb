@@ -345,11 +345,56 @@ class Bar(QWidget):
             self._fullscreen_monitoring_started = True
 
     def closeEvent(self, event):
-        if self._fullscreen_manager:
-            self._fullscreen_manager.stop_monitoring()
-        if self._autohide_manager:
-            self._autohide_manager.cleanup()
-        self.try_remove_app_bar()
+        """Enhanced cleanup on bar close"""
+        try:
+            # Stop fullscreen monitoring
+            if self._fullscreen_manager:
+                self._fullscreen_manager.stop_monitoring()
+                self._fullscreen_manager = None
+        except Exception as e:
+            logging.debug(f"Error stopping fullscreen manager: {e}")
+
+        try:
+            # Cleanup autohide
+            if self._autohide_manager:
+                self._autohide_manager.cleanup()
+                self._autohide_manager = None
+        except Exception as e:
+            logging.debug(f"Error cleaning up autohide manager: {e}")
+
+        try:
+            # Remove app bar
+            self.try_remove_app_bar()
+        except Exception as e:
+            logging.debug(f"Error removing app bar: {e}")
+
+        try:
+            # Disconnect screen geometry signal
+            if self._target_screen:
+                try:
+                    self._target_screen.geometryChanged.disconnect(self.on_geometry_changed)
+                except (RuntimeError, TypeError):
+                    pass
+        except Exception as e:
+            logging.debug(f"Error disconnecting screen signal: {e}")
+
+        try:
+            # Unregister event
+            if self._event_service:
+                self._event_service.unregister_event("handle_bar_cli", self.handle_bar_management)
+        except Exception as e:
+            logging.debug(f"Error unregistering event: {e}")
+
+        try:
+            # Stop any running animations
+            if hasattr(self, 'opacity_animation') and self.opacity_animation:
+                self.opacity_animation.stop()
+                self.opacity_animation.deleteLater()
+                self.opacity_animation = None
+        except Exception as e:
+            logging.debug(f"Error stopping animations: {e}")
+
+        super().closeEvent(event)
 
     def changeEvent(self, event: QEvent) -> None:
         if event.type() == QEvent.Type.PaletteChange:

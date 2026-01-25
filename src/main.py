@@ -156,6 +156,40 @@ async def main_async(app: YASBApplication):
     except Exception as e:
         logging.error(f"Error during application shutdown: {e}")
     finally:
+        # Enhanced cleanup sequence
+        try:
+            # Stop observer first
+            if observer:
+                observer.stop()
+                observer.join(timeout=2)
+        except Exception as e:
+            logging.debug(f"Error stopping observer: {e}")
+
+        try:
+            # Cleanup event service
+            EventService().shutdown()
+        except Exception as e:
+            logging.debug(f"Error shutting down event service: {e}")
+
+        try:
+            # Close all bars properly
+            if manager and hasattr(manager, 'bars'):
+                for bar in list(manager.bars):
+                    try:
+                        bar.close()
+                    except Exception as e:
+                        logging.debug(f"Error closing bar: {e}")
+        except Exception as e:
+            logging.debug(f"Error closing bars: {e}")
+
+        try:
+            # Stop all listener threads
+            if manager:
+                manager.stop_listener_threads()
+        except Exception as e:
+            logging.debug(f"Error stopping listener threads: {e}")
+
+        # Final quit
         app.quit()
         sys.exit()
 

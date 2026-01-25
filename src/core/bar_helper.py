@@ -252,23 +252,41 @@ class FullscreenManager(QObject):
 
     def _check_fullscreen_for_window(self):
         """Check if the focused window is fullscreen on the bar's screen"""
-        if not self.bar_widget:
+        # Safety check for bar widget validity
+        try:
+            if not self.bar_widget or not hasattr(self.bar_widget, 'isVisible'):
+                return
+        except RuntimeError:
+            # Widget has been deleted
             return
 
         # Get the currently focused window first
-        focused_hwnd = win32gui.GetForegroundWindow()
+        try:
+            focused_hwnd = win32gui.GetForegroundWindow()
+        except Exception:
+            return
+
         if not focused_hwnd:
             # No focused window, show bar if hidden
             self._prev_fullscreen_state = False
-            if not self.bar_widget.isVisible():
-                self.bar_widget.show()
+            try:
+                if not self.bar_widget.isVisible():
+                    self.bar_widget.show()
+            except (RuntimeError, AttributeError):
+                pass
             return
 
         # Early exit if focused window is invisible/minimized
-        if not win32gui.IsWindowVisible(focused_hwnd) or win32gui.IsIconic(focused_hwnd):
-            self._prev_fullscreen_state = False
-            if not self.bar_widget.isVisible():
-                self.bar_widget.show()
+        try:
+            if not win32gui.IsWindowVisible(focused_hwnd) or win32gui.IsIconic(focused_hwnd):
+                self._prev_fullscreen_state = False
+                try:
+                    if not self.bar_widget.isVisible():
+                        self.bar_widget.show()
+                except (RuntimeError, AttributeError):
+                    pass
+                return
+        except Exception:
             return
 
         # Check monitor early to avoid unnecessary calculations
@@ -284,17 +302,23 @@ class FullscreenManager(QObject):
                 # Only update visibility if state changed
                 if self._prev_fullscreen_state != found_fullscreen:
                     self._prev_fullscreen_state = found_fullscreen
-                    if found_fullscreen and self.bar_widget.isVisible():
-                        self.bar_widget.hide()
-                    elif not found_fullscreen and not self.bar_widget.isVisible():
-                        self.bar_widget.show()
+                    try:
+                        if found_fullscreen and self.bar_widget.isVisible():
+                            self.bar_widget.hide()
+                        elif not found_fullscreen and not self.bar_widget.isVisible():
+                            self.bar_widget.show()
+                    except (RuntimeError, AttributeError):
+                        pass
                 return
 
             # Use monitor handle as cache key
             cache_key = bar_monitor
-        except Exception:
+        except Exception as e:
             # If monitor check fails, use screen name as fallback cache key
-            cache_key = self.bar_widget.screen().name()
+            try:
+                cache_key = self.bar_widget.screen().name()
+            except (RuntimeError, AttributeError):
+                return
 
         # Check window class early to filter out system windows
         try:
@@ -311,8 +335,11 @@ class FullscreenManager(QObject):
         # Check if window is cloaked
         if self.is_window_cloaked(focused_hwnd):
             self._prev_fullscreen_state = False
-            if not self.bar_widget.isVisible():
-                self.bar_widget.show()
+            try:
+                if not self.bar_widget.isVisible():
+                    self.bar_widget.show()
+            except (RuntimeError, AttributeError):
+                pass
             return
 
         # Get or calculate cached screen rect for this specific screen
@@ -341,10 +368,13 @@ class FullscreenManager(QObject):
         # Only update visibility if state changed
         if self._prev_fullscreen_state != found_fullscreen:
             self._prev_fullscreen_state = found_fullscreen
-            if found_fullscreen and self.bar_widget.isVisible():
-                self.bar_widget.hide()
-            elif not found_fullscreen and not self.bar_widget.isVisible():
-                self.bar_widget.show()
+            try:
+                if found_fullscreen and self.bar_widget.isVisible():
+                    self.bar_widget.hide()
+                elif not found_fullscreen and not self.bar_widget.isVisible():
+                    self.bar_widget.show()
+            except (RuntimeError, AttributeError):
+                pass
 
     def _check_fullscreen_on_bar_monitor(self, bar_monitor):
         """

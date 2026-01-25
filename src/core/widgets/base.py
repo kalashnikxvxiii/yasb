@@ -23,6 +23,7 @@ class BaseWidget(QWidget):
         self.bar = None
         self.bar_id = None
         self.monitor_hwnd = None
+        self._is_destroyed = False
 
         if class_name:
             self._widget_frame.setProperty("class", f"widget {class_name}")
@@ -30,6 +31,7 @@ class BaseWidget(QWidget):
             self._widget_frame.setProperty("class", "widget")
 
         self.timer = QTimer(self)
+        self.timer.setSingleShot(False)
         self.mousePressEvent = self._handle_mouse_events
 
         self.widget_layout.setSpacing(0)
@@ -98,3 +100,26 @@ class BaseWidget(QWidget):
 
     def _cb_do_nothing(self):
         pass
+
+    def closeEvent(self, event):
+        """Ensure proper cleanup on widget close"""
+        self._is_destroyed = True
+        try:
+            if hasattr(self, 'timer') and self.timer:
+                self.timer.stop()
+                self.timer.deleteLater()
+        except (RuntimeError, AttributeError):
+            pass
+        super().closeEvent(event)
+
+    def __del__(self):
+        """Ensure cleanup on deletion"""
+        self._is_destroyed = True
+        try:
+            if hasattr(self, 'timer') and self.timer:
+                try:
+                    self.timer.stop()
+                except (RuntimeError, AttributeError):
+                    pass
+        except Exception:
+            pass

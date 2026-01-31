@@ -75,6 +75,12 @@ pattern = "BUILD_VERSION = \"(?P<version>[^\"]+)\""
 [tool.hatch.build.targets.wheel]
 packages = ["src/core"]
 
+[tool.mypy]
+python_version = "3.14"
+[[tool.mypy.overrides]]
+module = "core.utils.widgets.overlay_container.overlay_background_shader"
+disable_error_code = ["import-untyped", "misc", "assignment"]
+
 [tool.ruff]
 line-length = 120
 target-version = "py314"

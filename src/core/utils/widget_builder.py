@@ -1,6 +1,7 @@
 import logging
+from copy import deepcopy
 from importlib import import_module
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 from cerberus import Validator
@@ -9,6 +10,22 @@ from PyQt6.QtWidgets import QWidget
 
 from core.utils.alert_dialog import raise_info_alert
 from settings import DEFAULT_CONFIG_FILENAME
+
+
+def _normalize_overlay_container_options(options: dict[str, Any]) -> dict[str, Any]:
+    """Merge YAML dotted keys (e.g. background_shader.enabled) into nested dicts for Cerberus."""
+    out = deepcopy(options)
+    if "background_shader.enabled" in out:
+        nested = out.setdefault("background_shader", {})
+        if isinstance(nested, dict):
+            nested["enabled"] = out["background_shader.enabled"]
+        del out["background_shader.enabled"]
+    if "background_media.enabled" in out:
+        nested = out.setdefault("background_media", {})
+        if isinstance(nested, dict):
+            nested["enabled"] = out["background_media.enabled"]
+        del out["background_media.enabled"]
+    return out
 
 
 class WidgetBuilder(QObject):
@@ -54,6 +71,9 @@ class WidgetBuilder(QObject):
 
                 widget_options_validator = Validator(widget_schema)
                 widget_options = widget_config.get("options", {})
+
+                if "overlay_container" in widget_config.get("type", ""):
+                    widget_options = _normalize_overlay_container_options(widget_options)
 
                 if not widget_options_validator.validate(widget_options, widget_schema):
                     validation_errors = yaml.dump(widget_options_validator.errors)

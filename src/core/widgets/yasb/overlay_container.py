@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import QFrame, QGraphicsOpacityEffect, QHBoxLayout, QLabel,
 from core.config import get_config
 from core.utils.utilities import add_shadow, refresh_widget_style
 from core.utils.widget_builder import WidgetBuilder
-from core.utils.widgets.overlay_container import OverlayBackgroundMedia, OverlayBackgroundShader
+from core.utils.widgets.overlay_container import OverlayBackgroundMedia
 from core.validation.widgets.yasb.overlay_container import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 
@@ -64,19 +64,25 @@ class OverlayPanel(QWidget):
 
     def _update_background_geometry(self):
         """Update background widget geometry to match container."""
-        if self._background_widget and self._container:
-            rect = self._container.rect()
-            if rect.isValid() and rect.width() > 0 and rect.height() > 0:
-                # Apply offset if widget has offset attributes
-                offset_x = getattr(self._background_widget, "media_offset_x", 0)
-                offset_y = getattr(self._background_widget, "media_offset_y", 0)
+        if not self._background_widget or not self._container:
+            return
+        if getattr(self._background_widget, "_is_destroyed", False):
+            return
+        rect = self._container.rect()
+        if rect.isValid() and rect.width() > 0 and rect.height() > 0:
+            # Apply offset if widget has offset attributes
+            offset_x = getattr(self._background_widget, "media_offset_x", 0)
+            offset_y = getattr(self._background_widget, "media_offset_y", 0)
 
-                # Create new rect with offset applied
-                adjusted_rect = QRect(rect.x() + offset_x, rect.y() + offset_y, rect.width(), rect.height())
+            # Create new rect with offset applied
+            adjusted_rect = QRect(rect.x() + offset_x, rect.y() + offset_y, rect.width(), rect.height())
+            try:
                 self._background_widget.setGeometry(adjusted_rect)
-            else:
-                # Retry after a short delay if container doesn't have valid geometry yet
-                QTimer.singleShot(50, self._update_background_geometry)
+            except (RuntimeError, AttributeError):
+                pass
+        else:
+            # Retry after a short delay if container doesn't have valid geometry yet
+            QTimer.singleShot(50, self._update_background_geometry)
 
     def set_child_widget(self, widget):
         """Set the child widget to be displayed in the overlay."""
@@ -200,7 +206,6 @@ class OverlayContainerWidget(BaseWidget):
         self._is_cleaning_up = False  # Prevent operations during cleanup
         self._is_destroyed = False  # Track if widget is destroyed
         self._media_background = None  # Media background handler
-        self._shader_background = None  # Shader background handler
         self._init_retry_count = 0  # Track initialization retries
         self._max_init_retries = 50  # Max 5 seconds (50 * 100ms)
         self._event_filter_targets = []  # Track all widgets with event filters installed
@@ -291,18 +296,24 @@ class OverlayContainerWidget(BaseWidget):
     def _initialize_overlay(self):
         """Initialize the overlay panel after bar context is available."""
         try:
-            logging.debug(f"OverlayContainerWidget._initialize_overlay: Starting initialization (retry {self._init_retry_count}/{self._max_init_retries})")
+            logging.debug(
+                f"OverlayContainerWidget._initialize_overlay: Starting initialization (retry {self._init_retry_count}/{self._max_init_retries})"
+            )
 
             # Wait for bar context
             if not hasattr(self, "bar_id") or self.bar_id is None:
                 self._init_retry_count += 1
-                
+
                 if self._init_retry_count >= self._max_init_retries:
-                    logging.error(f"OverlayContainerWidget: Failed to initialize after {self._max_init_retries} retries (5 seconds). bar_id not available.")
+                    logging.error(
+                        f"OverlayContainerWidget: Failed to initialize after {self._max_init_retries} retries (5 seconds). bar_id not available."
+                    )
                     logging.error(f"OverlayContainerWidget: Widget hierarchy: {self._get_widget_hierarchy()}")
                     return
-                
-                logging.debug(f"OverlayContainerWidget._initialize_overlay: Waiting for bar_id, retrying in 100ms ({self._init_retry_count}/{self._max_init_retries})")
+
+                logging.debug(
+                    f"OverlayContainerWidget._initialize_overlay: Waiting for bar_id, retrying in 100ms ({self._init_retry_count}/{self._max_init_retries})"
+                )
                 QTimer.singleShot(100, self._initialize_overlay)
                 return
 
@@ -443,7 +454,7 @@ class OverlayContainerWidget(BaseWidget):
             return
 
         # Check if we have anything to display (child widget OR background)
-        has_background = self._background_shader.get("enabled", False) or self._background_media.get("enabled", False)
+        has_background = self._background_media.get("enabled", False)
 
         if not self._child_widget and not has_background:
             logging.error("OverlayContainerWidget: Cannot create overlay panel without child widget or background")
@@ -456,23 +467,10 @@ class OverlayContainerWidget(BaseWidget):
             f"OverlayContainerWidget._create_overlay_panel: OverlayPanel created, visible={self._overlay_panel.isVisible()}"
         )
 
-        # Priority: shader > media (only one can be active at a time)
-        # Shader has priority because it's more advanced and can be customized more
-
-        # Add background shader if enabled
-        if self._background_shader.get("enabled", False):
-            self._shader_background = OverlayBackgroundShader(self._background_shader, self._overlay_panel._container)
-            shader_widget = self._shader_background.get_widget()
-            if shader_widget:
-                # Set shader widget as background (will be positioned behind child widget)
-                self._overlay_panel.set_background_widget(shader_widget)
-                logging.info("OverlayContainerWidget: Added background shader to overlay panel")
-        # Add background media if enabled and shader is not
-        elif self._background_media.get("enabled", False):
+        if self._background_media.get("enabled", False):
             self._media_background = OverlayBackgroundMedia(self._background_media, self._overlay_panel._container)
             media_widget = self._media_background.get_widget()
             if media_widget:
-                # Set media widget as background (will be positioned behind child widget)
                 self._overlay_panel.set_background_widget(media_widget)
                 logging.info("OverlayContainerWidget: Added background media to overlay panel")
 
@@ -492,7 +490,7 @@ class OverlayContainerWidget(BaseWidget):
         """Install event filters for resize tracking with proper tracking."""
         # Clear any existing tracked targets
         self._event_filter_targets = []
-        
+
         if self._bar_widget:
             try:
                 self._bar_widget.installEventFilter(self)
@@ -523,7 +521,9 @@ class OverlayContainerWidget(BaseWidget):
                 try:
                     section_container.installEventFilter(self)
                     self._event_filter_targets.append(weakref.ref(section_container))
-                    logging.debug(f"OverlayContainerWidget: Installed event filter on section container '{self._target}'")
+                    logging.debug(
+                        f"OverlayContainerWidget: Installed event filter on section container '{self._target}'"
+                    )
                 except (RuntimeError, AttributeError):
                     pass
 
@@ -540,15 +540,15 @@ class OverlayContainerWidget(BaseWidget):
                             pass
                 except (RuntimeError, AttributeError):
                     pass
-        
+
         self._initialized = True
         logging.debug(f"OverlayContainerWidget: Installed {len(self._event_filter_targets)} event filters")
 
     def _remove_all_event_filters(self):
         """Remove all installed event filters safely using tracked weak references."""
-        if not hasattr(self, '_event_filter_targets'):
+        if not hasattr(self, "_event_filter_targets"):
             return
-            
+
         removed_count = 0
         for weak_ref in self._event_filter_targets:
             try:
@@ -562,7 +562,7 @@ class OverlayContainerWidget(BaseWidget):
                         pass
             except Exception:
                 pass
-        
+
         self._event_filter_targets = []
         logging.debug(f"OverlayContainerWidget: Removed {removed_count} event filters")
 
@@ -572,14 +572,14 @@ class OverlayContainerWidget(BaseWidget):
         # This prevents crashes from processing events on destroyed objects
         if self._is_destroyed or self._is_cleaning_up:
             return False
-        
+
         # Safety check: verify we're still valid
         try:
             # Quick check if self is still valid
             _ = self._target
         except (RuntimeError, AttributeError):
             return False
-        
+
         event_type = event.type()
 
         if event_type in (QEvent.Type.Resize, QEvent.Type.Move, QEvent.Type.Show, QEvent.Type.Hide):
@@ -622,11 +622,11 @@ class OverlayContainerWidget(BaseWidget):
         if self._is_cleaning_up:
             logging.debug("OverlayContainerWidget: Skipping geometry update during cleanup")
             return
-            
+
         # Don't schedule if timer is None (already cleaned up)
-        if self._update_timer is None and hasattr(self, '_is_cleaning_up') and self._is_cleaning_up:
+        if self._update_timer is None and hasattr(self, "_is_cleaning_up") and self._is_cleaning_up:
             return
-            
+
         # Cancel any pending update
         if self._update_timer:
             try:
@@ -976,7 +976,7 @@ class OverlayContainerWidget(BaseWidget):
         self._is_destroyed = True
         self._is_cleaning_up = True
         try:
-            if hasattr(self, '_update_timer') and self._update_timer:
+            if hasattr(self, "_update_timer") and self._update_timer:
                 try:
                     self._update_timer.stop()
                 except (RuntimeError, AttributeError):
@@ -987,11 +987,11 @@ class OverlayContainerWidget(BaseWidget):
     def cleanup(self):
         """Clean up the widget with defensive error handling to prevent crashes."""
         logging.debug("OverlayContainerWidget: Starting cleanup")
-        
+
         # Mark as cleaning up FIRST to prevent any new operations
         self._is_cleaning_up = True
         self._is_destroyed = True
-        
+
         # Stop update timer first - CRITICAL to prevent callbacks on destroyed objects
         if self._update_timer:
             try:
@@ -1008,30 +1008,10 @@ class OverlayContainerWidget(BaseWidget):
                 logging.warning(f"OverlayContainerWidget: Error stopping update timer: {e}")
             finally:
                 self._update_timer = None
-        
+
         # Remove ALL event filters using the tracked weak references
         # This is CRITICAL - event filters on destroyed objects cause segfaults
         self._remove_all_event_filters()
-        
-        # Clean up backgrounds BEFORE overlay panel to prevent OpenGL context errors
-        # Order matters: shader/media widgets must be destroyed before their parent
-        if self._shader_background:
-            try:
-                # Hide first to stop rendering
-                shader_widget = self._shader_background.get_widget()
-                if shader_widget:
-                    try:
-                        shader_widget.hide()
-                        shader_widget.setParent(None)
-                    except (RuntimeError, AttributeError):
-                        pass
-                        
-                self._shader_background.cleanup()
-                logging.debug("OverlayContainerWidget: Cleaned up shader background")
-            except Exception as e:
-                logging.warning(f"OverlayContainerWidget: Error cleaning up shader background: {e}", exc_info=True)
-            finally:
-                self._shader_background = None
 
         if self._media_background:
             try:
@@ -1043,7 +1023,7 @@ class OverlayContainerWidget(BaseWidget):
                         media_widget.setParent(None)
                     except (RuntimeError, AttributeError):
                         pass
-                        
+
                 self._media_background.cleanup()
                 logging.debug("OverlayContainerWidget: Cleaned up media background")
             except Exception as e:
@@ -1065,5 +1045,5 @@ class OverlayContainerWidget(BaseWidget):
         self._child_widget = None
         self._bar_widget = None
         self._target_widget_ref = None
-        
+
         logging.info("OverlayContainerWidget: Cleanup completed successfully")

@@ -14,6 +14,65 @@ from core.utils.utilities import app_data_path
 from core.validation.widgets.yasb.cava import VALIDATION_SCHEMA
 from core.widgets.base import BaseWidget
 
+# Process lifecycle: track active cava processes and clean orphans on startup
+_active_cava_processes: dict[int, subprocess.Popen] = {}
+_cava_processes_lock = threading.Lock()
+_orphan_cleanup_done = False
+
+
+def _kill_orphan_cava_processes() -> None:
+    """Kill cava.exe processes not in our registry (e.g. left behind after crash). Run once per app lifecycle."""
+    global _orphan_cleanup_done
+    with _cava_processes_lock:
+        if _orphan_cleanup_done:
+            return
+        _orphan_cleanup_done = True
+    try:
+        import psutil
+        our_pids = set()
+        with _cava_processes_lock:
+            for proc in _active_cava_processes.values():
+                if proc.poll() is None:
+                    our_pids.add(proc.pid)
+        killed = 0
+        for proc in psutil.process_iter(["pid", "name"]):
+            try:
+                if proc.info.get("name", "").lower() in ("cava.exe", "cava"):
+                    if proc.info["pid"] not in our_pids:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=2)
+                        except (psutil.TimeoutExpired, psutil.NoSuchProcess):
+                            proc.kill()
+                        killed += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        if killed:
+            logging.info("Cleaned up %d orphan cava process(es) on startup", killed)
+    except Exception as e:
+        logging.debug("Orphan cava cleanup: %s", e)
+
+
+def _cleanup_all_cava_processes() -> None:
+    """Terminate all tracked cava processes (atexit)."""
+    with _cava_processes_lock:
+        for instance_id, proc in list(_active_cava_processes.items()):
+            try:
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                logging.debug("Terminated cava process (instance %s)", instance_id)
+            except (subprocess.TimeoutExpired, OSError):
+                try:
+                    proc.kill()
+                    logging.warning("Killed cava process (instance %s)", instance_id)
+                except OSError:
+                    pass
+            _active_cava_processes.pop(instance_id, None)
+
+
+atexit.register(_cleanup_all_cava_processes)
+
 
 class CavaBar(QFrame):
     def __init__(self, cava_widget):
@@ -460,6 +519,8 @@ class CavaWidget(BaseWidget):
             self._widget_container_layout.addWidget(error_label)
             return
 
+        _kill_orphan_cava_processes()
+
         # Add the custom bar frame
         self._bar_frame = CavaBar(self)
         self._widget_container_layout.addWidget(self._bar_frame)
@@ -506,12 +567,16 @@ class CavaWidget(BaseWidget):
     def stop_cava(self) -> None:
         self._stop_cava = True
         self.colors.clear()
+        with _cava_processes_lock:
+            _active_cava_processes.pop(self._instance_id, None)
         if hasattr(self, "_cava_process") and self._cava_process.poll() is None:
             try:
                 self._cava_process.terminate()
                 self._cava_process.wait(timeout=2)
+                logging.debug("Terminated cava process (instance %s)", self._instance_id)
             except subprocess.TimeoutExpired:
                 self._cava_process.kill()
+                logging.warning("Killed cava process (instance %s)", self._instance_id)
         if hasattr(self, "thread_cava") and self.thread_cava.is_alive():
             if threading.current_thread() != self.thread_cava:
                 self.thread_cava.join(timeout=2)
@@ -615,6 +680,9 @@ class CavaWidget(BaseWidget):
                     stderr=subprocess.DEVNULL,
                     creationflags=subprocess.CREATE_NO_WINDOW,
                 )
+                with _cava_processes_lock:
+                    _active_cava_processes[self._instance_id] = self._cava_process
+                logging.debug("Started cava process (instance %s, PID %s)", self._instance_id, self._cava_process.pid)
 
                 chunk = bytesize * self._bars_number
                 fmt = bytetype * self._bars_number

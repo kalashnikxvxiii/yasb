@@ -149,6 +149,11 @@ class SystrayWidget(BaseWidget):
         self.pinned_vis_check_timer.timeout.connect(self.update_pinned_widget_visibility)
         self.pinned_vis_check_timer.setSingleShot(True)
 
+        # Recursive update prevention flag
+        self._is_updating_visibility = False
+        # Cache last visibility state to avoid unnecessary updates
+        self._last_pinned_visible = True
+
         self.widget_container_layout = QHBoxLayout()
         self.widget_container_layout.setSpacing(0)
         self.widget_container_layout.setContentsMargins(
@@ -325,7 +330,8 @@ class SystrayWidget(BaseWidget):
         self.update_icon_data(icon.data, data)
         icon.update_icon()
         icon.setHidden(data.uFlags & NIF_STATE != 0 and data.dwState == 1)
-        self.pinned_vis_check_timer.start(300)
+        # Increase debounce delay to reduce rapid visibility updates
+        self.pinned_vis_check_timer.start(500)
 
     @pyqtSlot(IconData)
     def on_icon_deleted(self, data: IconData) -> None:
@@ -334,7 +340,8 @@ class SystrayWidget(BaseWidget):
         if icon is not None:
             self.icons.remove(icon)
             icon.deleteLater()
-            self.pinned_vis_check_timer.start(300)
+            # Increase debounce delay to reduce rapid visibility updates
+            self.pinned_vis_check_timer.start(500)
 
     @pyqtSlot(object)
     def on_icon_pinned_changed(self, icon: IconWidget):
@@ -389,7 +396,8 @@ class SystrayWidget(BaseWidget):
                 icons_changed = True
 
         if icons_changed:
-            self.pinned_vis_check_timer.start(300)
+            # Increase debounce delay to reduce rapid visibility updates
+            self.pinned_vis_check_timer.start(500)
 
     def update_icon_data(self, old_data: IconData | None, new_data: IconData):
         """Update the icon data with the new data received from the tray monitor"""
@@ -441,16 +449,31 @@ class SystrayWidget(BaseWidget):
         Update the visibility of the pinned widget based on its content.
         If force_show is True, the widget will be shown regardless of content.
         """
-        is_empty = self.is_layout_empty(self.pinned_layout)
-        self.pinned_widget.setVisible(not is_empty or force_show)
-        if force_show and is_empty:
-            logger.debug(f"Is empty: {is_empty}, force show: {force_show}")
-            self.pinned_widget.setProperty("forceshow", True)
-            refresh_widget_style(self.pinned_widget)
-        elif self.pinned_widget.property("forceshow") and not is_empty:
-            logger.debug(f"Is empty: {is_empty}, force show: {force_show}")
-            self.pinned_widget.setProperty("forceshow", False)
-            refresh_widget_style(self.pinned_widget)
+        # Prevent recursive updates to avoid feedback loops with bar resize events
+        if self._is_updating_visibility:
+            logger.debug("SystrayWidget: Skipping recursive visibility update")
+            return
+
+        self._is_updating_visibility = True
+        try:
+            is_empty = self.is_layout_empty(self.pinned_layout)
+            new_visible = not is_empty or force_show
+
+            # Only update visibility if it actually changed to reduce layout recalculations
+            if new_visible != self._last_pinned_visible or force_show:
+                self.pinned_widget.setVisible(new_visible)
+                self._last_pinned_visible = new_visible
+                logger.debug(f"SystrayWidget: Updated pinned visibility to {new_visible} (empty={is_empty}, force={force_show})")
+
+            if force_show and is_empty:
+                if not self.pinned_widget.property("forceshow"):
+                    self.pinned_widget.setProperty("forceshow", True)
+                    refresh_widget_style(self.pinned_widget)
+            elif self.pinned_widget.property("forceshow") and not is_empty:
+                self.pinned_widget.setProperty("forceshow", False)
+                refresh_widget_style(self.pinned_widget)
+        finally:
+            self._is_updating_visibility = False
 
     def toggle_unpinned_widget_visibility(self):
         """On button click, toggle the visibility of the unpinned widget."""
